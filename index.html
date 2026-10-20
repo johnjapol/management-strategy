@@ -27,6 +27,13 @@ h1{font-family:var(--display);font-size:1.9rem;margin:0;text-wrap:balance}
 .tabs button[aria-selected="true"]{background:var(--accent);border-color:var(--accent);color:var(--paper);font-weight:700}
 .score{font-variant-numeric:tabular-nums;font-size:.9rem;color:var(--muted);display:flex;gap:12px;align-items:center;flex-wrap:wrap}
 .score b{color:var(--mark);font-size:1.1rem}
+.wbtn{font:inherit;font-size:.82rem;border:1px solid var(--mark);background:var(--paper);color:var(--mark);border-radius:999px;padding:4px 12px;cursor:pointer}
+.wbtn[aria-pressed="true"]{background:var(--mark);color:var(--paper)}
+.wbtn:disabled{opacity:.45;cursor:default}
+.wbtn:focus-visible,.reset:focus-visible{outline:2px solid var(--accent);outline-offset:2px}
+.wc{font-size:.75em;color:var(--mark);font-weight:700;font-variant-numeric:tabular-nums}
+.tabs button[aria-selected="true"] .wc{color:var(--paper)}
+.wbanner{background:var(--nobg);border-left:3px solid var(--mark);padding:8px 12px;border-radius:4px;font-size:.88rem}
 .reset{font:inherit;font-size:.82rem;border:none;background:none;color:var(--accent);cursor:pointer;text-decoration:underline}
 .section{font-family:var(--display);font-size:1.15rem;margin:10px 0 0;color:var(--accent)}
 .q{background:var(--paper);border:1px solid var(--line);border-radius:6px;padding:16px 18px;display:flex;flex-direction:column;gap:10px;min-width:0}
@@ -59,7 +66,7 @@ h1{font-family:var(--display);font-size:1.9rem;margin:0;text-wrap:balance}
   </header>
   <div class="bar">
     <div class="tabs" role="tablist" id="tabs"></div>
-    <div class="score"><span>점수 <b id="pts">0</b> / <span id="tot">100</span></span><span id="prog"></span><span id="conv"></span><button class="reset" id="reset" type="button">이 세트 다시 풀기</button></div>
+    <div class="score"><span>점수 <b id="pts">0</b> / <span id="tot">100</span></span><span id="prog"></span><span id="conv"></span><button class="wbtn" id="wrongBtn" type="button" aria-pressed="false">틀린 문제만 보기</button><button class="reset" id="retryBtn" type="button" hidden>틀린 문제 다시 풀기</button><button class="reset" id="reset" type="button">이 세트 다시 풀기</button></div>
   </div>
   <main id="main" style="display:flex;flex-direction:column;gap:12px"></main>
 </div>
@@ -376,31 +383,55 @@ const S=[
 
 const CH={1:"1장",2:"2장",3:"3장",4:"4장",5:"5장"};
 const NUMS=["①","②","③","④","⑤"];
-let cur=0; const state=S.map(s=>({mc:Array(s.mc.length).fill(null),sa:Array(s.sa.length).fill(null)}));
+const KEY="midterm-state-v1";
+const blank=s=>({mc:Array(s.mc.length).fill(null),sa:Array(s.sa.length).fill(null),saT:Array(s.sa.length).fill("")});
+let cur=0; const state=S.map(blank);
+try{const sv=JSON.parse(localStorage.getItem(KEY)||"null");
+  if(sv&&Array.isArray(sv.state))sv.state.forEach((x,i)=>{const s=S[i];if(!s||!x||!Array.isArray(x.mc)||x.mc.length!==s.mc.length||!Array.isArray(x.sa)||x.sa.length!==s.sa.length)return;
+    state[i]={mc:x.mc,sa:x.sa,saT:Array.isArray(x.saT)&&x.saT.length===s.sa.length?x.saT:Array(s.sa.length).fill("")};});
+  if(sv&&Number.isInteger(sv.cur)&&sv.cur>=0&&sv.cur<S.length)cur=sv.cur;}catch(e){}
+function save(){try{localStorage.setItem(KEY,JSON.stringify({cur,state}));}catch(e){}}
 const $=id=>document.getElementById(id);
 const norm=t=>t.replace(/[\s()·.,\-]/g,"").toLowerCase();
+const esc=t=>String(t).replace(/[&<>"]/g,c=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;"}[c]));
+let wrongView=null; /* {mc:Set, sa:Set} — 틀린 문제만 보기 켰을 때의 목록(다시 풀어도 그대로 보이도록 고정) */
+function wrongOf(i){const s=S[i],st=state[i];return{mc:new Set(st.mc.map((v,j)=>v!==null&&v!==s.mc[j].a?j:-1).filter(j=>j>=0)),sa:new Set(st.sa.map((v,j)=>v===false?j:-1).filter(j=>j>=0))};}
+function wrongCount(i){const w=wrongOf(i);return w.mc.size+w.sa.size;}
 
-function tabs(){$("tabs").innerHTML=S.map((_,i)=>`<button role="tab" type="button" aria-selected="${i===cur}" data-i="${i}">${S[i].name||'세트 '+i}</button>`).join("");
-  $("tabs").querySelectorAll("button").forEach(b=>b.onclick=()=>{cur=+b.dataset.i;render();window.scrollTo({top:0});});}
+function tabs(){$("tabs").innerHTML=S.map((_,i)=>{const w=wrongCount(i);return `<button role="tab" type="button" aria-selected="${i===cur}" data-i="${i}">${S[i].name||'세트 '+i}${w?` <span class="wc">✕${w}</span>`:""}</button>`;}).join("");
+  $("tabs").querySelectorAll("button").forEach(b=>b.onclick=()=>{cur=+b.dataset.i;wrongView=null;save();render();window.scrollTo({top:0});});}
 function score(){const st=state[cur],s=S[cur];let p=0,done=0;
   st.mc.forEach((v,i)=>{if(v!==null){done++;if(v===s.mc[i].a)p+=3;}});
   st.sa.forEach(v=>{if(v!==null){done++;if(v)p+=5;}});
   const tot=s.mc.length*3+s.sa.length*5;$("pts").textContent=p;$("tot").textContent=tot;$("prog").textContent=`${done}/${s.mc.length+s.sa.length} 문항`;$("conv").textContent=`30점 환산 ${(p/tot*30).toFixed(1)}`;}
-function render(){tabs();const s=S[cur],st=state[cur];let h=(s.note?`<p class="sub">${s.note}</p>`:"")+`<h2 class="section">객관식 (각 3점)</h2>`;
-  s.mc.forEach((q,i)=>{const v=st.mc[i];h+=`<div class="q"><div class="qh"><span class="num">${i+1}.</span><span class="qt">${q.q}</span><span class="meta">${CH[q.c]}</span></div><div class="opts">`+
+function controls(){const w=wrongCount(cur),on=!!wrongView;
+  $("wrongBtn").textContent=on?"전체 문제 보기":`틀린 문제만 보기 (${w})`;$("wrongBtn").setAttribute("aria-pressed",on);
+  $("wrongBtn").disabled=!on&&w===0;
+  $("retryBtn").hidden=!on||w===0;}
+function render(){tabs();const s=S[cur],st=state[cur],wv=wrongView;
+  let h=(s.note?`<p class="sub">${s.note}</p>`:"");
+  if(wv){const n=wv.mc.size+wv.sa.size;
+    h+=`<div class="wbanner">틀린 문제 ${n}개만 보고 있어요. 번호는 원래 번호 그대로예요. 다시 풀어서 맞혀도 이 화면에는 남아 있어요.</div>`;
+    if(!n)h+=`<p class="sub">이 세트에서 틀린 문제가 없어요.</p>`;}
+  const showMc=s.mc.some((_,i)=>!wv||wv.mc.has(i)),showSa=s.sa.some((_,i)=>!wv||wv.sa.has(i));
+  if(showMc)h+=`<h2 class="section">객관식 (각 3점)</h2>`;
+  s.mc.forEach((q,i)=>{if(wv&&!wv.mc.has(i))return;const v=st.mc[i];h+=`<div class="q"><div class="qh"><span class="num">${i+1}.</span><span class="qt">${q.q}</span><span class="meta">${CH[q.c]}</span></div><div class="opts">`+
     q.o.map((o,j)=>{let cls="";if(v!==null){if(j===q.a)cls="right";else if(j===v)cls="wrong";}
       return `<button class="opt ${cls}" type="button" data-q="${i}" data-o="${j}" ${v!==null?"disabled":""}><span class="bub">${q.o.length===2?(j?"X":"O"):j+1}</span><span>${o}</span></button>`;}).join("")+`</div>`+
     (v!==null?`<div class="exp"><strong>${v===q.a?"정답":"오답"} · 정답 ${q.o.length===2?q.o[q.a]:NUMS[q.a]}</strong> — ${q.e}</div>`:"")+`</div>`;});
-  if(s.sa.length)h+=`<h2 class="section">단답형 (각 5점)</h2>`;
-  s.sa.forEach((q,i)=>{const v=st.sa[i],n=s.mc.length+i+1;h+=`<div class="q"><div class="qh"><span class="num">${n}.</span><span class="qt">${q.q}</span><span class="meta">${CH[q.c]}</span></div>`+
-    `<div class="sa"><input id="sa-${cur}-${i}" aria-label="${n}번 답" placeholder="답을 입력하세요" ${v!==null?"disabled":""}><button type="button" data-sa="${i}" ${v!==null?"disabled":""}>채점</button></div>`+
+  if(s.sa.length&&showSa)h+=`<h2 class="section">단답형 (각 5점)</h2>`;
+  s.sa.forEach((q,i)=>{if(wv&&!wv.sa.has(i))return;const v=st.sa[i],n=s.mc.length+i+1;h+=`<div class="q"><div class="qh"><span class="num">${n}.</span><span class="qt">${q.q}</span><span class="meta">${CH[q.c]}</span></div>`+
+    `<div class="sa"><input id="sa-${cur}-${i}" aria-label="${n}번 답" placeholder="답을 입력하세요" value="${esc(st.saT[i]||"")}" ${v!==null?"disabled":""}><button type="button" data-sa="${i}" ${v!==null?"disabled":""}>채점</button></div>`+
     (v!==null?`<div class="exp"><span class="${v?"res-ok":"res-no"}">${v?"정답":"오답"}</span> — ${q.e}</div>`:"")+`</div>`;});
   $("main").innerHTML=h;
-  $("main").querySelectorAll(".opt").forEach(b=>b.onclick=()=>{st.mc[+b.dataset.q]=+b.dataset.o;render();});
+  $("main").querySelectorAll(".opt").forEach(b=>b.onclick=()=>{st.mc[+b.dataset.q]=+b.dataset.o;save();render();});
   $("main").querySelectorAll("[data-sa]").forEach(b=>b.onclick=()=>{const i=+b.dataset.sa,inp=$(`sa-${cur}-${i}`),t=norm(inp.value);
-    if(!t){inp.focus();return;} st.sa[i]=s.sa[i].a.some(x=>t.includes(norm(x)));const keep=inp.value;render();$(`sa-${cur}-${i}`).value=keep;});
-  score();}
-$("reset").onclick=()=>{state[cur]={mc:Array(S[cur].mc.length).fill(null),sa:Array(S[cur].sa.length).fill(null)};render();};
+    if(!t){inp.focus();return;} st.sa[i]=s.sa[i].a.some(x=>t.includes(norm(x)));st.saT[i]=inp.value;save();render();});
+  score();controls();}
+$("wrongBtn").onclick=()=>{wrongView=wrongView?null:wrongOf(cur);render();window.scrollTo({top:0});};
+$("retryBtn").onclick=()=>{const st=state[cur],w=wrongOf(cur);wrongView=w;
+  w.mc.forEach(j=>st.mc[j]=null);w.sa.forEach(j=>{st.sa[j]=null;st.saT[j]="";});save();render();window.scrollTo({top:0});};
+$("reset").onclick=()=>{state[cur]=blank(S[cur]);wrongView=null;save();render();};
 render();
 </script>
 
